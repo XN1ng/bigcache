@@ -60,7 +60,7 @@ func (s *cacheShard) getWithInfo(key string, hashedKey uint64) (entry []byte, re
 }
 
 func (s *cacheShard) get(key string, hashedKey uint64) ([]byte, error) {
-	s.lock.RLock()
+	s.lock.RLock() //读锁
 	wrappedEntry, err := s.getWrappedEntry(hashedKey)
 	if err != nil {
 		s.lock.RUnlock()
@@ -120,6 +120,7 @@ func (s *cacheShard) getValidWrapEntry(key string, hashedKey uint64) ([]byte, er
 func (s *cacheShard) set(key string, hashedKey uint64, entry []byte) error {
 	currentTimestamp := uint64(s.clock.Epoch())
 
+	//写锁
 	s.lock.Lock()
 
 	if previousIndex := s.hashmap[hashedKey]; previousIndex != 0 {
@@ -132,6 +133,7 @@ func (s *cacheShard) set(key string, hashedKey uint64, entry []byte) error {
 
 	if !s.cleanEnabled {
 		if oldestEntry, err := s.entries.Peek(); err == nil {
+			//实际上没有删除数据，只是delte了s.hashmap
 			s.onEvict(oldestEntry, currentTimestamp, s.removeOldestEntry)
 		}
 	}
@@ -144,6 +146,8 @@ func (s *cacheShard) set(key string, hashedKey uint64, entry []byte) error {
 			s.lock.Unlock()
 			return nil
 		}
+		//到这里说明entries容量满了，进行老key的移除
+		//然后for循环里面继续尝试Push写入
 		if s.removeOldestEntry(NoSpace) != nil {
 			s.lock.Unlock()
 			return errors.New("entry is bigger than max shard size")
@@ -197,12 +201,14 @@ func (s *cacheShard) setWrappedEntryWithoutLock(currentTimestamp uint64, w []byt
 	}
 }
 
+// 事实上和set一样，把老的entry hash reset掉，把新的entry放到队尾
 func (s *cacheShard) append(key string, hashedKey uint64, entry []byte) error {
 	s.lock.Lock()
 	wrappedEntry, err := s.getValidWrapEntry(key, hashedKey)
 
+	//可能是为空或者key不一致(hashkey碰撞)
 	if err == ErrEntryNotFound {
-		err = s.addNewWithoutLock(key, hashedKey, entry)
+		err = s.addNewWithoutLock(key, hashedKey, entry) //第一步已经锁过了，不用再加锁了
 		s.lock.Unlock()
 		return err
 	}
@@ -215,7 +221,7 @@ func (s *cacheShard) append(key string, hashedKey uint64, entry []byte) error {
 
 	w := appendToWrappedEntry(currentTimestamp, wrappedEntry, entry, &s.entryBuffer)
 
-	err = s.setWrappedEntryWithoutLock(currentTimestamp, w, hashedKey)
+	err = s.setWrappedEntryWithoutLock(currentTimestamp, w, hashedKey) //第一步已经锁过了，不用再加锁了
 	s.lock.Unlock()
 
 	return err
@@ -232,7 +238,7 @@ func (s *cacheShard) del(hashedKey uint64) error {
 			s.delmiss()
 			return ErrEntryNotFound
 		}
-
+		//todo :: 类似双重校验锁
 		if err := s.entries.CheckGet(int(itemIndex)); err != nil {
 			s.lock.RUnlock()
 			s.delmiss()

@@ -11,6 +11,7 @@ const (
 	headersSizeInBytes   = timestampSizeInBytes + hashSizeInBytes + keySizeInBytes // Number of bytes used for all headers
 )
 
+// data : timestap + hashkey + keyLength + key + entry
 func wrapEntry(timestamp uint64, hash uint64, key string, entry []byte, buffer *[]byte) []byte {
 	keyLength := len(key)
 	blobLength := len(entry) + headersSizeInBytes + keyLength
